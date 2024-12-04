@@ -48,8 +48,8 @@ df = pd.DataFrame(sebze_data + meyve_data)
 
 
 conn = pyodbc.connect(f'Driver={{SQL SERVER}};'
-                      f'Server={{BETULLL\SQLEXPRESS}};'
-                      f'Database={{HalFiyatları}};'
+                      f'Server={{your_server}};'
+                      f'Database={{your_database}};'
                       f'Trusted_Connection=yes;')
 cursor = conn.cursor()
 for index, row in df.iterrows():
