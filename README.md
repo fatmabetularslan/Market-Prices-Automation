@@ -109,4 +109,7 @@ python scripts/mersin.py
 Airflow UI'ına http://localhost:8080 adresinden erişin ve DAG'leri aktif edin.
 
 
+![image](https://github.com/user-attachments/assets/52dfe1e0-c31c-4f1b-93a7-2fdc269dc1ed)
+
+
 
