@@ -33,8 +33,8 @@ df = pd.DataFrame(data)
 
 # SQL bağlantısı
 conn = pyodbc.connect(f'Driver={{SQL SERVER}};'
-                      f'Server=BETULLL\SQLEXPRESS;'
-                      f'Database=HalFiyatları;'
+                      f'Server=your_serverS;'
+                      f'Database=your_databse;'
                       f'Trusted_Connection=yes;')
 
 cursor = conn.cursor()
