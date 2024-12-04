@@ -2,75 +2,125 @@ import datetime
 from bs4 import BeautifulSoup
 import requests
 import pandas as pd
-import pyodbc
+import psycopg2
+import json
+
+# Çerezler ve başlıklar
 cookies = {
     'PHPSESSID': 'q4o3jv9i915vo7knl8qusi9jao',
     'MBB-Cookie': '2399275530.47873.0000',
     'CookieInfoScript': '1',
-    'TS01f00959': '017de0d5fafedb9ee09bcd1a92a6baec792bdec189d074662f40d6c1de87b6caa56e7987ba3d20ed54d22ff60875037ae5d30fba9ec80c6d08ff1a30f2b015b113522edfe456abe669034fa8415b980b4cc3786605',
 }
 
 headers = {
     'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.9,tr;q=0.8,tr-TR;q=0.7',
-    'Connection': 'keep-alive',
-    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-    # 'Cookie': 'PHPSESSID=q4o3jv9i915vo7knl8qusi9jao; MBB-Cookie=2399275530.47873.0000; CookieInfoScript=1; TS01f00959=017de0d5fafedb9ee09bcd1a92a6baec792bdec189d074662f40d6c1de87b6caa56e7987ba3d20ed54d22ff60875037ae5d30fba9ec80c6d08ff1a30f2b015b113522edfe456abe669034fa8415b980b4cc3786605',
-    'Origin': 'https://www.mersin.bel.tr',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-origin',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
     'X-Requested-With': 'XMLHttpRequest',
-    'sec-ch-ua': '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
 }
 
+def fetch_mersin_data(ti=None):  # Airflow için ti parametresi ekledik
+    all_data = []
 
-for i in range(3,5):
+    # Kategoriler: 3 = Meyve, 4 = Sebze
+    for category in range(3, 5):
+        data = {
+            'published': str(datetime.date.today()),  # Tarihi dinamik olarak gönder
+            'product_category': str(category),
+        }
 
-    data = {
-        'published': '' + str(datetime.date.today()) + '',  # tarihi dinamik
-        'product_category': '' + str(i) + '',  # 3 meyve 4 sebze
-    }
+        # POST isteği gönder
+        response = requests.post('https://www.mersin.bel.tr/hal-fiyatlari-day', cookies=cookies, headers=headers, data=data)
 
-    response = requests.post('https://www.mersin.bel.tr/hal-fiyatlari-day', cookies=cookies, headers=headers, data=data)
+        if response.status_code == 200:
+            # Yanıtı parse et
+            df_list = pd.read_html(response.content.decode('utf-8'))
+            if df_list:
+                df = df_list[0]
+                
+                # Sütunları ve veriyi kontrol et
+                if not df.empty:
+                    current_date = datetime.date.today()
+                    df['Tarih'] = current_date
+                    all_data.append(df)
+        else:
+            print(f"Hata: {response.status_code}")
 
+    # Veriyi birleştir
+    if all_data:
+        full_df = pd.concat(all_data, ignore_index=True)
+        save_to_database(full_df, ti)  # Veriyi kaydet ve XCom'a gönder
+    else:
+        print("Veri bulunamadı.")
 
-source = BeautifulSoup(response.content, "html.parser", from_encoding="iso-8859-8")
+def save_to_database(df, ti=None):
+    try:
+        # Tarih sütununu datetime formatına çevir
+        df['Tarih'] = df['Tarih'].astype(str)  # XCom için string'e çeviriyoruz
 
-pd.set_option('display.max_columns', None)
-pd.set_option('display.width', 500)
-df = pd.read_html(response.content.decode('utf-8'))[0]
+        conn = psycopg2.connect(
+            host='your_host', 
+            database='your_db',
+            user='your_user',
+            password='your_password',
+            port=5432
+        )
+        cur = conn.cursor()
 
-#print(df)
+        # Tabloyu oluştur (eğer yoksa)
+        cur.execute(""" 
+            CREATE TABLE IF NOT EXISTS mersin_halfiyati (
+                id SERIAL PRIMARY KEY,
+                sube VARCHAR(100),
+                urun VARCHAR(100),
+                cinsi VARCHAR(100),
+                turu VARCHAR(100),
+                min_fiyat NUMERIC,
+                max_fiyat NUMERIC,
+                ort_fiyat NUMERIC,
+                birim VARCHAR(20),
+                tarih DATE
+            )
+        """)
 
-current_date = datetime.date.today()
-df['Tarih'] = current_date
-conn = pyodbc.connect(f'Driver={{SQL SERVER}};'
-                       f'Server={{BETULLL\SQLEXPRESS}};'
-                       f'Database={{HalFiyatları}};'
-                       f'Trusted_Connection=yes;')
+        # Veri ekleme sorgusu
+        insert_query = """
+            INSERT INTO mersin_halfiyati (sube, urun, cinsi, turu, min_fiyat, max_fiyat, ort_fiyat, birim, tarih) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
 
-Cursor = conn.cursor()
+        for index, row in df.iterrows():
+            veri = (
+                row['ŞUBE'], 
+                row['ÜRÜN'], 
+                row['CİNSİ'], 
+                row['TÜRÜ'],
+                float(row['Min. Fiyat'].replace(' TL', '').replace(',', '.')),
+                float(row['Mak. Fiyat'].replace(' TL', '').replace(',', '.')),
+                float(row['Ort. Fiyat'].replace(' TL', '').replace(',', '.')),
+                row['Birim'], 
+                row['Tarih']
+            )
+            cur.execute(insert_query, veri)
 
-for index, row in df.iterrows():
-     sql_sorgusu = "INSERT INTO mersinhalfiyatı (Şube, Ürün, Cinsi, Türü ,MinFiyat, MaxFiyat, OrtFiyat, Birim, Tarih) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-     veri = (
-         row['ŞUBE'], 
-         row['ÜRÜN'], 
-         row['CİNSİ'], 
-         row['TÜRÜ'],
-         float(row['Min. Fiyat'].replace(' TL', '').replace(',', '.')),
-         float(row['Mak. Fiyat'].replace(' TL', '').replace(',', '.')),
-         float(row['Ort. Fiyat'].replace(' TL', '').replace(',', '.')),
-         row['Birim'], 
-         row['Tarih']
-     )
-     print(index, veri)  # Log verileri kontrol etmek için
-     Cursor.execute(sql_sorgusu, veri)
+        # Değişiklikleri kaydet
+        conn.commit()
 
-conn.commit()  # Tüm işlemler bittiğinde commit çağrılır
-Cursor.close()
-conn.close()
+        # XCom'a JSON olarak gönderme
+        if ti:
+            ti.xcom_push(key='mersin_data', value=df.to_dict(orient='records'))
+
+        print("Veri başarıyla veritabanına eklendi.")
+    
+    except Exception as e:
+        print("Veritabanına bağlanırken hata oluştu:", e)
+
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
+            
+        # JSON formatında döndürme
+        return json.dumps(df.to_dict(orient="records"), ensure_ascii=False, indent=4)
+
+if __name__ == '__main__':
+    fetch_mersin_data()
