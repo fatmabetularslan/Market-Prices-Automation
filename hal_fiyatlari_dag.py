@@ -12,8 +12,8 @@ def run_mersin_py():
 
 def run_kocaeli_py():
     subprocess.run(["python3", "/opt/airflow/dags/KOCAELİ.py"], check=True)
-
-
+def run_izmirpy():
+    subprocess.run(["python3", "/opt/airflow/dags/izmir.py"], check=True)
 # Varsayılan ayarlar (retry, başlangıç tarihi vs.)
 default_args = {
     'owner': 'airflow',
@@ -29,7 +29,7 @@ default_args = {
 dag = DAG(
     'hal_fiyatlari_dag',
     default_args=default_args,
-    description='Adana, Mersin ve Kocaeli hal fiyatlarını otomatik çekme',
+    description='Adana, Mersin, İzmir ve Kocaeli hal fiyatlarını otomatik çekme',
     schedule_interval='@daily',  # Her gün çalışacak
 )
 
@@ -51,6 +51,11 @@ run_kocaeli_task = PythonOperator(
     python_callable=run_kocaeli_py,
     dag=dag,
 )
-
+run_izmir_task = PythonOperator(
+    task_id='run_izmir_py',
+    python_callable=run_izmir_py,
+    dag=dag,
+)
 # Task'lerin sırası (önce Adana, sonra Mersin, sonra Kocaeli)
-run_adana_task >> run_mersin_task >> run_kocaeli_task
+run_adana_task >> run_mersin_task >> run_kocaeli_task>> run_izmir_task
+
